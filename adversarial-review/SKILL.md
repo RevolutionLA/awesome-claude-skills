@@ -1,134 +1,181 @@
 ---
 name: adversarial-review
-description: Runs a three-role adversarial code review closure — a hostile Blue Team that must attach evidence chains, an independent Third Party that distrusts both sides' documents and hunts defects introduced by the fixes, and a neutral adjudicator that accepts or rejects each finding. Use when the user asks for a "blue team review", "adversarial review", "red team review", "pre-release review", "cross-check my changes", or "find bugs in my code", or wants a stronger quality gate before a release.
+description: 开发完成后的三方对抗式代码评审闭环：蓝军（敌意审查，须给证据链）→ 第三方（独立审计，不信双方文档、只读代码，专找"修改引入的新缺陷"并稽核蓝军漏审的维度）→ 中立裁定（逐条采纳/驳回、审查双方共同前提）。当用户说"蓝军评审""第三方复核""对抗性审查""红蓝互搏""三方评审""交叉验证""发布前审查""帮我挑刺""adversarial review""red team review""pre-release review""critique this""find bugs in my code"或要求提升代码质量、准备发布前把关时使用。也适用于用户想把当前会话变成"多个 Agent 互搏"来提升代码水平的场景。
 license: MIT
-compatibility: Requires a host that can dispatch independent subagents (Claude Code, DeepSeek Harness, Cursor, Codex, or similar). Without subagent support, degrade to a single agent playing all three roles serially and state that in the report.
+compatibility: 需要一个能派发独立子代理（subagent）的宿主（Claude Code / DeepSeek Harness / Cursor / Codex 等）。若无子代理能力，降级为单 agent 串行扮演三角色，并在报告中如实声明独立性已显著削弱。
 metadata:
   author: RevolutionLA
-  version: "1.1"
+  version: "2.0"
 ---
 
-# Adversarial Review (Blue Team / Third Party / Adjudication)
+# 三方对抗式代码评审（Blue Team / Third Party / Adjudication）
 
-A three-role adversarial code review closure that replaces "let me look at this again" with **structured adversarial relationships**.
+## 这个 skill 要解决什么
 
-## When to Use This Skill
+单人或单 AI 写代码，最大的风险不是"不会写"，而是：
 
-- The user says "blue team review", "adversarial review", "red team review", "cross-check my changes", "find bugs in my code", "poke holes in this", or "pre-release review".
-- A feature is complete and about to be merged.
-- A release is being prepared, or a large refactor just landed.
-- Code was changed in response to a previous review and you want to verify nothing new broke.
-- The user wants to improve code quality and is willing to spend some API budget to be genuinely challenged.
+1. **用未验证的乐观假设说服自己推迟修复**（"这个兜底应该够了吧"）；
+2. **测试提供假安全感**（测试全绿，但功能其实早坏了）；
+3. **为了修 A 而引入 B**（新写的修复代码本身没被独立审视）。
 
-Do **not** use it for one-line copy edits, or when the user wants reassurance rather than critique — this skill's posture is hostile by design.
+这三个问题**靠"再仔细看一遍"解决不了**——写代码的人和审代码的人是同一个，就一定会为自己辩护。只能靠**结构化的对抗关系**：
 
-## What This Skill Does
-
-Single-person or single-AI development has three failure modes that "looking more carefully" cannot fix, because the person writing and the person reviewing are the same:
-
-1. **Unverified optimistic assumptions postpone fixes** — "surely this fallback covers it".
-2. **Tests provide false security** — the suite is green but the feature broke long ago.
-3. **Fixing A introduces B** — the newly written fix is itself never independently examined.
-
-This skill splits the *positions*, not just the effort:
-
-| Role | Stance | Hard constraint |
+| 角色 | 立场 | 硬性约束 |
 |---|---|---|
-| **Blue Team** | Hostile review — assume it breaks, then prove it | Every finding needs an evidence chain (`file:line`, a repro command, or upstream source). No "consider improving robustness" platitudes. |
-| **Third Party** | Independent audit — trusts **neither** side's documents, reads only code | Must verify claim-by-claim that "fixed" means actually fixed, and must specifically hunt defects **introduced by the remediation** |
-| **Adjudicator** | Accepts / rejects / re-grades each Third Party finding | Must be a **different agent from the Blue Team**. The accused cannot be the judge. |
+| **蓝军** | 敌意审查——假设代码会出事，去**证明** | 每条结论必须附证据链（`文件:行号` / 实测命令 / 上游源码）；禁止空话 |
+| **第三方** | 独立审计——**不信任任何一方文档**，直接读代码 | 逐条复核"声称修了的是否真修了"、**专找修改引入的新缺陷**、并稽核蓝军**漏掉了哪些维度** |
+| **中立裁定** | 对双方结论**逐条采纳 / 驳回 / 改级** | 必须由**与蓝军不同的 agent** 担任；当事人不能当法官 |
 
-The point is not "get two more AIs to look at it" — it is the **ordering and mutual distrust**: the Third Party distrusts the developers, the Adjudicator distrusts both the Blue Team and the Third Party. Remove any stage and the closure breaks.
+**关键不是"多找两个 AI 看看"，而是顺序与互不信任**：第三方不信开发团队，裁定方不信蓝军和第三方。任一环节缺失，闭环就破。
 
-## How to Use
+### 配套文件（按需读取）
 
-### Basic Usage
+- **`references/review-dimensions.md`** —— **完整质量维度清单（19 项）**。第 0 步按改动类型选维度时必须读，否则审查会漏掉大片区域。
+- **`references/prompt-templates.md`** —— **三个角色的完整提示词模板 + 占位符约定**。第 1/2/3 步派发子代理时直接取用，不要临时自编。
+- **`references/quickstart.md`** —— 面向用户的上手说明（档位选择、什么时候不该用它）。
+- **`references/skill-spec.md`** —— 写/改 skill 时的 SKILL.md 规范速查。
+- **`examples/sample-review.md`** —— 一次真实评审的产出样例。
 
-```
-Run a blue team review on the auth module before I merge.
-```
+> ⚠️ **能力边界（必须向用户如实说明）**
+> 子代理与主代理通常是**同一模型**，这不是真正独立的第三方。其价值来自**角色约束 + 强制证据**，而非"另一个 AI 的观点"。
+> - ✅ 能有效抓出：代码级错误、逻辑漏洞、测试造假、自相矛盾、遗漏分支、声明与实现不符；
+> - ❌ 抓不出：**双方共有的知识盲区**（例如对某个上游行为的一致误解）。若某个结论依赖外部系统行为，必须要求**实测验证**，而不是两个 agent 互相点头。
+>
+> 向用户汇报时，不要说"经独立第三方验证无误"，要说"经同模型不同角色的对抗审查"。
 
-### Advanced Usage
+> 🔁 **降级模式（宿主无子代理能力时）**
+> 若宿主不提供 `subagent`，只能由**同一个 agent 串行扮演三角色**。此时：
+> - 独立性**已被显著削弱**，第 2、3 步的价值大幅下降；
+> - 必须在报告开头显式声明"本次为降级模式，角色由同一 agent 串行扮演"；
+> - 不得使用"独立复核""第三方验证"等措辞；
+> - 有条件时优先换一个有子代理能力的宿主，而不是将就。
 
-```
-This release is going out tonight — run a heavy-tier adversarial review.
-Heavy tier: separate parallel subagents for compatibility, functional safety,
-and ecosystem coexistence.
-```
+---
 
-Tiers:
+## 执行流程
 
-| Tier | Configuration | Use for |
+### 第 0 步：确定档位、范围与维度
+
+先问用户或从上下文判断档位（默认**标准档**）：
+
+| 档位 | 配置 | 适用 |
 |---|---|---|
-| **Light** | 1 Blue Team subagent (correctness / compatibility / test validity) | Small changes, tight deadlines |
-| **Standard** (default) | Blue Team → Third Party → Adjudicator, 3 rounds | Normal feature work |
-| **Heavy** | Standard + parallel cross-verification across dimensions | Pre-release, major refactors, upstream compatibility |
+| **轻档** | 1 个蓝军（聚焦选定维度）| 小改动、时间紧 |
+| **标准档**（默认）| 蓝军全量 → 第三方复核 → 中立裁定，共 3 轮 | 一般功能版本 |
+| **重档** | 标准档 + 多路子代理并行交叉验证（按维度分组并行审）| 发布前、重大重构、涉及上游兼容 |
 
-### The Five Steps
+**必做四件事**：
 
-**Step 0 — Pick tier and scope.** Record the baseline with `git rev-parse --short HEAD` and `git status`. Commit or at least stage the work first: a chaotic working tree makes findings unreliable.
+1. **确定基线**：`git rev-parse --short HEAD` + `git status`，写进报告表头。
+2. **把待审状态提交或暂存**——让蓝军拿到可复现的基线。工作区一片混乱时审查结论不可靠。
+3. **选维度**：读 `references/review-dimensions.md`，按"按改动类型选维度"表选出本次**必审维度**。**不要默认全审**——19 项全塞进一次审查只会让报告又长又浅。
+4. **定报告目录**（默认 `docs/review/`）。
 
-**Step 1 — Blue Team (hostile review).** Dispatch a `subagent`. **Do not** use a forked agent — a fork inherits your reasoning and will just agree with you. The prompt must forbid trusting the developers' docs and comments, must target compatibility / error handling / test validity / declared-vs-actual mismatches / newly introduced defects / resource lifecycle / security, and must require real evidence over assertion.
+### 第 1 步：蓝军评审（敌意审查）
 
-**Step 2 — Third Party (independent audit).** Dispatch a **new** subagent. It must relocate all line numbers itself (they shift after remediation), verify each Blue Team item actually landed, and — its most important unique duty — find defects the remediation introduced.
+用 `subagent` 起一个子代理，**禁止**用 `subagent_fork`（fork 会继承你的思路，失去独立性）。
 
-**Step 3 — Adjudication.** Dispatch a **third, fresh** subagent as a neutral adjudicator. It trusts neither report, re-reads the code, and rules accept / partial / reject on each item, explicitly permitted to raise or lower severity. See the warning below.
+从 `references/prompt-templates.md` 取**模板 1**，替换所有 `<...>` 占位符。三个不可省略的要素：
 
-**Step 4 — Remediation.** The main agent does the fixes personally — remediation needs global consistency judgement. Every fix needs a regression test, and tests must assert **observable behavior**, not implementation strings.
+- **要求逐项覆盖选定维度**，每项都要有结论（哪怕是"未发现问题"）。整项跳过是禁止的。
+- **要求报告落盘**并把路径回报——长报告经子代理回传容易截断。
+- **禁止空话**：每条结论必须落到具体代码位置与具体后果。
 
-**Step 5 — Close out and archive.** Separate "fixed" / "deferred (with verified reason)" / "could not verify". Archive reports (a `docs/review/` convention is described in the full skill).
+### 第 2 步：第三方复核（独立审计）
 
-### Why the adjudicator must not be the Blue Team
+拿到蓝军报告后，用**新的** `subagent`（不要复用蓝军那个，避免它为自己的结论辩护）。
 
-An earlier version of this skill let the Blue Team adjudicate the Third Party's findings, reasoning that "the Blue Team doesn't trust the Third Party" fit the spirit. **This was wrong, and it was caught by running this skill on itself.**
+从 `references/prompt-templates.md` 取**模板 2**。除"验证整改是否落地"和"找新缺陷"外，本版新增第三个方向：
 
-The adjudication targets *the Third Party's review of the Blue Team's findings*. If the Blue Team adjudicates, it is simultaneously **the accused and the judge** — it will systematically reject findings against itself. That directly contradicts the core rule in Steps 1–2 (never reuse an agent, or it defends its own conclusions). Express "the Blue Team doesn't trust the Third Party" through the **adjudicator's prompt stance**, not by reusing the agent's identity.
+- **稽核蓝军的覆盖度**——找出蓝军整项跳过、或"未发现问题"但实际有问题的维度。**只验证蓝军说过的话是不够的**，否则蓝军的盲区会变成整个流程的盲区。
 
-## Example
+### 第 3 步：中立裁定
 
-**User**: "Run a blue team review on this module before I merge."
+**必须起一个全新的 `subagent` 作为"中立裁定方"**，不是蓝军，也不是第三方。
 
-**Output** (abridged — a real run against this skill's own SKILL.md):
+> ⚠️ **为什么不能复用蓝军做裁定**：裁定的对象是"第三方对蓝军意见的复核"。若让蓝军自己裁定，它同时是**当事人**和**法官**——它会系统性驳回针对自己的批评。这与本 skill 第 1、2 步「禁止复用 agent」的核心原则**直接冲突**。
+> "蓝军不信第三方"这个设定通过**提示词立场**表达，**不是**通过复用 agent 身份实现。
+> 降级选项：宿主子代理数量受限时，可用 `send_message` 复用蓝军 agent，但**必须在报告里声明"裁定方与蓝军为同一 agent，独立性已降级"**。
 
-| ID | Severity | One-line | Dimension |
-|---|---|---|---|
-| B1 | 🔴 | Step 3 lets the Blue Team adjudicate findings against itself, contradicting the skill's own core rule | Governance |
-| B2 | 🟠 | `description` lacks English trigger phrases, so international users never activate it | Usability |
+从 `references/prompt-templates.md` 取**模板 3**。本版新增一项关键职责：
 
-**B1 evidence chain**: `SKILL.md:163` reads "or reuse the Blue Team agent via `send_message` to adjudicate — this better fits the 'Blue Team distrusts the Third Party' premise", while `SKILL.md:250` explicitly forbids "letting the same agent review, fix, and re-review → it will defend its own conclusions".
+- **审查两方共有的前提**——如果蓝军和第三方都基于同一个未经验证的假设，必须标出来并要求实测。**这是同模型互搏最大的盲区**，也是这个 skill 能提供的最高价值。
 
-**Trigger**: any standard-tier review where a Third Party finding criticizes the Blue Team's original report.
+### 第 4 步：主代理执行整改
 
-**User-visible consequence**: criticism of the Blue Team is systematically rejected; the user receives a "the Blue Team is always right" adjudication and believes the closure held.
+拿到合并清单后，**由你（主代理）亲自改代码**，不要外包——整改需要全局一致性判断。
 
-**Fix direction**: Step 3 dispatches a brand-new neutral adjudicator; the distrust posture lives in the prompt, not in a reused agent.
+整改纪律：
 
-The full report also includes a priority roadmap (P0/P1/P2), "what was done right and should be preserved", and a declaration of **unverified items** — honesty about what was not verified is worth more than pretending it was.
+1. **每条改动配一个回归用例**。特别是：无测试覆盖的修复必复发。回归用例要写成**可重复运行**的形式（测试文件或脚本），不是"我当时手工验过"。
+2. **测试要断言"行为"，不要断言"实现字符串"**。反例：断言 CSS 里"包含某类名"——这类名会随构建漂移，测试永远绿而功能早坏。正例：模拟真实输入，断言**用户可观察的结果**。
+3. **改完必须自己复验**：语法检查、全量测试、以及关键修复的**最小复现**（证明修前坏、修后好）。
+4. **诚实记录**：如果发现自己在上一轮文档里写了错误结论，**显式标注作废**，不要悄悄改掉。三方评审的价值就在于留下可追溯的纠正记录。
+5. **改完回头验一遍文档里引用的行号和路径**——整改会让行号位移、文件移动会让路径失效。这是本 skill 历史上反复出现的翻车点。
+6. 不要为了让报告好看而虚报。做不到就写"推迟"并给出**经过验证的**理由。
 
-**Inspired by:** the author's own development practice of running mutually distrustful review roles to catch defects that self-review structurally cannot.
+### 第 5 步：收口与归档
 
-## Tips
+1. **汇报时明确区分**：哪些已修、哪些推迟（附理由）、哪些未能验证。
+2. 按下方策略归档报告。
+3. 若涉及发布：确认版本号一致、CI 实际跑过（**不是"配置了 CI"**）、文档与实际改动一致。
 
-- **Never fork the Blue Team.** A fork inherits your framing and will only agree with you.
-- **Never let the Blue Team adjudicate.** The accused cannot be the judge.
-- **Require unverified-item declarations.** It makes uncertainty explicit instead of hiding it behind a confident tone.
-- **Require reachability analysis.** Otherwise theoretical edge cases get graded critical and dilute attention away from real problems.
-- **Let the adjudicator reject.** The Third Party is also fallible; without adjudication the process degenerates into "more opinions is better".
-- **Demand evidence, not advice.** "Consider adding robustness" is not a finding. `file:line` plus a reproduction is.
+---
 
-## Common Use Cases
+## 报告归档
 
-- Pre-release quality gate on a feature branch.
-- Verifying that remediation of a previous review did not introduce new defects.
-- Auditing a suspicious test suite that is green but unconvincing.
-- Checking declared-vs-actual consistency before publishing (README/CHANGELOG claims vs the code).
-- Adversarial review of a plugin or library before publishing it to an ecosystem where you cannot easily retract it.
+**默认策略按项目可见性决定**（选错会造成死链或泄密）：
 
-## Honest Limitation (read this before trusting the output)
+| 项目类型 | 默认做法 |
+|---|---|
+| **私有仓库 / 未发布** | 写入 `docs/review/` 并**加入 `.gitignore`**，内部攻防记录不外泄 |
+| **公开仓库** | 要么正常提交（作为质量流程展示），要么 gitignore **并且彻底清理引用** |
 
-Subagents and the main agent are usually **the same model**, so this is not a genuinely independent Third Party. The value comes from **role constraints plus mandatory evidence**, not from "another AI's opinion".
+```gitignore
+# internal review notes (kept locally, deliberately NOT published)
+/docs/review/
+```
 
-- ✅ **Reliably catches**: code-level errors, logic holes, fabricated tests, self-contradictions, missed branches, declared-vs-actual mismatches.
-- ❌ **Cannot catch**: **shared blind spots** — for example, a mutual misunderstanding of an upstream system's behavior. If a conclusion depends on external system behavior, it must be **empirically verified**, not settled by two agents nodding at each other.
+命名约定（`<version>` 用版本号或 commit sha）：
 
-When reporting, do not say "verified by an independent third party" — say "adversarially reviewed by different roles of the same model".
+```
+docs/review/
+├─ BLUE-TEAM-REVIEW-<version>.md       # 蓝军（含宿主/上游源码级证据）
+├─ RESPONSE-<version>.md               # 开发团队逐条回应（采纳/部分/推迟/驳回）
+├─ THIRD-PARTY-REVIEW-<version>.md     # 第三方独立复核（T 项 + 覆盖度稽核）
+└─ ADJUDICATION-<version>.md           # 中立裁定（对双方结论的最终裁定）
+```
+
+⚠️ **报告若被 gitignore，务必同时清理 README/CHANGELOG 里指向它们的链接**——否则发布后是死链。
+
+---
+
+## 提示词设计要点（改模板时别丢这些）
+
+| 要点 | 为什么关键 |
+|---|---|
+| **角色 + 立场** 而非"帮我审一下" | 立场决定它能发现什么。"挑刺"和"检查"产出完全不同 |
+| **必须给证据链**（文件:行号 / 实测） | 禁止空话，也让结论可复查；编造行号能被抓到 |
+| **禁止采信文档** | 文档是最容易骗人的东西，文档失实是真实翻车点 |
+| **逐维度表态** | 沉默的维度会被误当成"没问题"，实际可能根本没人看 |
+| **第三方要稽核蓝军的覆盖度** | 否则蓝军的盲区变成整个流程的盲区 |
+| **专找"修改引入的新缺陷"** | 独立角色，是标准流程里最容易漏的一环 |
+| **裁定方必须与蓝军不同 agent** | 当事人不能当法官，否则裁定退化为自我辩护 |
+| **裁定方要审查两方共同前提** | 同模型互搏最大的盲区就是"双方都同意的错误假设" |
+| **逼它声明"未验证项"** | 把不确定性显式化，避免用自信语气掩盖无知 |
+| **要求区分可达性** | 防止把理论可能定成高危，稀释注意力 |
+| **要求落盘** | 长报告经子代理回传容易截断，落盘更可靠 |
+
+---
+
+## 常见的错误用法
+
+- ❌ **用 `subagent_fork` 起蓝军** → 继承你的思路，只会附和。
+- ❌ **让蓝军自己裁定第三方意见** → 当事人当法官，针对蓝军的批评会被系统性驳回。
+- ❌ **第三方只验"修了没"** → 丢掉"找新缺陷"和"稽核蓝军覆盖度"两项价值。
+- ❌ **把 19 个维度一次性全塞进去** → 报告又长又浅，真问题被稀释。按改动类型选。
+- ❌ **把三方报告当成"通过认证"** → 同模型互搏抓不出共同盲区；依赖外部行为的关键结论必须实测。
+- ❌ **改了代码不补可运行的回归用例** → 下轮评审同样的问题会再次出现。
+- ❌ **改完不回头验文档里的行号/路径** → 整改必然造成位移，示例里的行号会全部失效。
+- ❌ **报告写得很漂亮但代码没动** → 立刻修订，别把流程做成表演。
+- ❌ **"配置了 CI"就当"CI 跑过了"** → 检查必须**真的能失败**，永远绿的检查等于没有检查。
